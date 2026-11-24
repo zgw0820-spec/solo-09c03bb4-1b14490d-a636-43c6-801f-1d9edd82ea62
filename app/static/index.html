@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>产线缺陷分数推理 · 单帧缺口补算</title>
+<link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+<header class="topbar">
+  <div>
+    <h1>产线缺陷分数推理</h1>
+    <p class="sub">固定权重 NumPy 递推模型 · 每路允许暂缺一帧 · 补交原帧后按帧序补算</p>
+  </div>
+  <div class="modelbox" id="modelbox">模型加载中…</div>
+</header>
+
+<main>
+  <section class="toolbar">
+    <button id="btn-reset" class="ghost">重置 / 载入样例</button>
+    <button id="btn-play-a">相机 A 自动跑到底</button>
+    <button id="btn-demo" class="accent">试跑：边补帧边进新帧</button>
+    <label class="pace">补算节拍
+      <select id="pace">
+        <option value="0">不等待</option>
+        <option value="120" selected>120 ms / 帧</option>
+        <option value="300">300 ms / 帧</option>
+      </select>
+    </label>
+    <span id="hint" class="hint">先「重置 / 载入样例」，再试跑演示；也可用每个相机卡片里的单步按钮手动操作。</span>
+  </section>
+
+  <section class="grid" id="cameras"></section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>手动提交一帧</h2>
+      <span class="hint">按相机 + 帧号提交 8 维特征向量；帧号必须接在本路已出分帧之后（允许跳过一个帧号）。</span>
+    </div>
+    <form id="submit-form" class="submit-form">
+      <label>相机
+        <select id="submit-camera"></select>
+      </label>
+      <label>帧号
+        <input id="submit-frame" type="number" min="1" value="1" required />
+      </label>
+      <label class="wide">特征向量（8 个数字，逗号或空格分隔）
+        <textarea id="submit-features" rows="2" spellcheck="false" placeholder="0.30, 0.31, ..."></textarea>
+      </label>
+      <div class="submit-actions">
+        <button type="submit" class="accent">提交这一帧</button>
+        <button type="button" id="submit-missing" class="ghost">把这一帧标为缺失</button>
+        <button type="button" id="submit-samples" class="ghost small">用样例帧填充</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <div class="panel-head">
+      <h2>操作记录</h2>
+      <button id="btn-clear-log" class="ghost small">清空</button>
+    </div>
+    <div id="log" class="log"></div>
+  </section>
+
+  <details class="panel docs">
+    <summary>规则说明</summary>
+    <ul>
+      <li>按相机与帧号提交 8 维特征向量；每路同一时间最多只允许缺一帧。</li>
+      <li>缺帧时用零向量代入，继续出分，受影响的分数标为「暂估」。</li>
+      <li>补交原帧后，从缺口前的状态按帧序补算；两路照常接帧出分。</li>
+      <li>补算追上本路最新已出分的帧，才把修正状态交给后续推理；已发分数不改，修正值并列展示。</li>
+      <li>补算失败则保留原状态与缺口，分数照常发布，可重试。</li>
+    </ul>
+  </details>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>

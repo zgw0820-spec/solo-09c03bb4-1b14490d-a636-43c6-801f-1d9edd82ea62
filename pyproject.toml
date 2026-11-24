@@ -1,0 +1,16 @@
+[project]
+name = "quality-inference-demo"
+version = "1.0.0"
+description = "Camera frame quality scoring with zero-substitution gap recovery"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.165.0",
+    "uvicorn[standard]==0.54.0",
+    "numpy==2.4.6",
+    "pydantic==2.14.4",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["ignore::DeprecationWarning"]
