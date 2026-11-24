@@ -46,7 +46,10 @@ async function api(method, path, body) {
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail = data.detail ? JSON.stringify(data.detail) : data.message || res.statusText;
-    throw new Error(`${res.status} ${detail}`);
+    const err = new Error(`${res.status} ${detail}`);
+    err.status = res.status;
+    err.data = data;
+    throw err;
   }
   return data;
 }
@@ -82,6 +85,7 @@ function renderTable(cam, scores) {
       el("span", { style: `width:${(s.score * 100).toFixed(1)}%;background:${s.estimated ? "var(--est)" : scoreColor(s.score)}` }));
     const tags = el("td", {},
       s.estimated ? el("span", { class: "tag est", text: "暂估" }) : el("span", { class: "tag live", text: "实测" }));
+    if (s.pair_id) tags.append(" ", el("span", { class: "tag pair", title: `成对提交 ${s.pair_id}`, text: "成对" }));
     if (s.revision > 0) tags.append(" ", el("span", { class: "tag rev", text: `已补算 v${s.revision}` }));
     const revised = s.revised_score === null ? el("td", { class: "num", text: "—" })
       : el("td", { class: "num" }, el("div", { text: fmt(s.revised_score) }),
@@ -177,6 +181,234 @@ async function refresh() {
       return node;
     }),
   );
+  state.snaps = Object.fromEntries(snaps.map((s) => [s.camera, s]));
+  renderPairPanel(snaps);
+  await renderPairHistory();
+}
+
+function renderPairPanel(snaps) {
+  const holder = $("#pair-fields");
+  if (!holder) return;
+  holder.replaceChildren(
+    ...state.samples.cameras.map((cam) => {
+      const snap = snaps.find((s) => s.camera === cam.camera);
+      const nextNo = (snap?.last_frame ?? 0) + 1;
+      const haveNext = !!frameOf(cam.camera, nextNo);
+      return el("div", { class: "pair-cam" },
+        el("div", { class: "pair-cam-head" },
+          el("strong", { text: cam.name }),
+          el("span", { class: "statedigest", text: `当前 #${snap?.last_frame ?? 0} · 版本 v${snap?.version ?? 0}${snap?.gap ? ` · 缺口 #${snap.gap.frame_no}` : ""}` }),
+        ),
+        el("div", { class: "pair-cam-body" },
+          el("label", { class: "pair-label" }, "下一帧号",
+            el("input", {
+              class: "pair-frame", type: "number", min: "1", value: String(nextNo),
+              "data-camera": String(cam.camera), disabled: state.busy,
+            })),
+          el("label", { class: "pair-label wide" }, "8 维特征",
+            el("textarea", {
+              class: "pair-features", rows: "2", spellcheck: "false",
+              "data-camera": String(cam.camera), disabled: state.busy,
+              placeholder: haveNext ? "点下方「用两路样例下一帧填充」" : "样例里没有该帧，请手动填写 8 个数字",
+            })),
+        ),
+      );
+    }),
+  );
+}
+
+function pairInputs() {
+  const rows = [...document.querySelectorAll("#pair-fields .pair-cam")].map((row) => {
+    const camera = Number(row.querySelector(".pair-frame").dataset.camera);
+    const frameNo = Number(row.querySelector(".pair-frame").value);
+    const features = parseFeatures(row.querySelector(".pair-features").value);
+    return { camera, frame_no: frameNo, features };
+  });
+  if (rows.length !== state.samples.cameras.length) {
+    throw new Error("成对提交必须包含两路相机");
+  }
+  return rows;
+}
+
+async function fillPairFromSamples() {
+  for (const cam of state.samples.cameras) {
+    const snap = state.snaps?.[cam.camera];
+    const nextNo = (snap?.last_frame ?? 0) + 1;
+    const frame = frameOf(cam.camera, nextNo);
+    const row = document.querySelector(`#pair-fields .pair-frame[data-camera="${cam.camera}"]`)?.closest(".pair-cam");
+    if (!row) continue;
+    row.querySelector(".pair-frame").value = String(nextNo);
+    row.querySelector(".pair-features").value = frame ? frame.features.join(", ") : "";
+  }
+  toast("已按两路各自的下一帧填充样例");
+}
+
+async function submitPair() {
+  await withBusy(async () => {
+    const items = pairInputs();
+    const delay = Number($("#pair-delay").value || 0);
+    try {
+      const r = await api("POST", "/api/pairs", { items, compute_delay_ms: delay });
+      const desc = r.items.map((it) =>
+        `${camName(it.camera)} #${it.frame_no} ${fmt(it.score)}${it.estimated ? "（暂估）" : ""}`).join("；");
+      log("ok", `成对提交 ${r.pair_id} 两路同时生效：${desc}`);
+    } catch (err) {
+      if (err.status === 409 && err.data?.code === "pair_conflict") {
+        const who = (err.data.conflicts || []).map((c) => `相机${c.camera}`).join("、") || "任一路";
+        log("bad", `成对提交被整次退回：${who} 在计算期间有新分/补算/重置。请刷新后重试。`);
+        toast(`并发冲突（409）：${who} 已变化，页面已刷新，请重试`);
+      } else {
+        throw err;
+      }
+    }
+  });
+}
+
+async function renderPairHistory() {
+  const holder = $("#pair-history");
+  if (!holder) return;
+  const data = await api("GET", "/api/pairs?limit=20");
+  if (!data.pairs.length) {
+    holder.replaceChildren(el("div", { class: "empty", text: "还没有成对提交。" }));
+    return;
+  }
+  holder.replaceChildren(
+    ...data.pairs.map((p) => el("div", { class: "pair-row" },
+      el("span", { class: "tag pair", text: p.pair_id }),
+      el("span", { class: "statedigest", text: p.submitted_at.replace("T", " ").replace("Z", " UTC") }),
+      ...p.items.map((it) => el("span", { class: "pair-item" },
+        `${camName(it.camera)} #${it.frame_no} `,
+        el("strong", { text: fmt(it.score) }),
+        it.estimated ? el("span", { class: "tag est", text: "暂估" }) : el("span", { class: "tag live", text: "实测" }),
+      )),
+    )),
+  );
+}
+
+async function pairDemo() {
+  if (state.busy) return;
+  state.busy = true;
+  $("#btn-pair-demo").disabled = true;
+  try {
+    await api("POST", "/api/reset", { confirm: true });
+    await refresh();
+    log("", "成对提交演示开始：每笔同时送两路下一帧，共送 4 笔（#1–#4）");
+    for (let n = 1; n <= 4; n += 1) {
+      const items = state.samples.cameras.map((cam) => ({
+        camera: cam.camera,
+        frame_no: n,
+        features: frameOf(cam.camera, n).features,
+      }));
+      const r = await api("POST", "/api/pairs", { items });
+      const desc = r.items.map((it) =>
+        `${camName(it.camera)} #${it.frame_no} ${fmt(it.score)}${it.estimated ? "（暂估）" : ""}`).join("；");
+      log("ok", `${r.pair_id} 两路同时生效：${desc}`);
+      await refresh();
+    }
+    // One camera has a gap: its paired scores must be estimated, single flow
+    // keeps working, then its fill revises the frames while the other camera
+    // keeps publishing.
+    log("", "在相机 A 打开缺口 #5（零向量暂估），随后两路继续成对提交");
+    await api("POST", "/api/cameras/0/missing", { frame_no: 5 });
+    await refresh();
+    for (let n = 6; n <= 8; n += 1) {
+      const items = state.samples.cameras.map((cam) => ({
+        camera: cam.camera,
+        frame_no: n,
+        features: frameOf(cam.camera, n).features,
+      }));
+      const r = await api("POST", "/api/pairs", { items });
+      const a = r.items.find((it) => it.camera === 0);
+      const b = r.items.find((it) => it.camera === 1);
+      log(a.estimated ? "warn" : "ok",
+        `${r.pair_id}：相机 A #${a.frame_no} ${fmt(a.score)}（缺口未补，暂估）；相机 B #${b.frame_no} ${fmt(b.score)}（实测），一笔同时生效`);
+      await refresh();
+    }
+    const fill = await api("POST", "/api/cameras/0/fill", {
+      frame_no: 5, features: frameOf(0, 5).features, pace_ms: Number($("#pace").value || 0),
+    });
+    log("ok", `相机 A 补算完成：回放 #${fill.replay.from}–#${fill.replay.to}，已发分数未改、修正值并列；之后成对提交回到实测`);
+    const next = 9;
+    const r = await api("POST", "/api/pairs", {
+      items: state.samples.cameras.map((cam) => ({
+        camera: cam.camera, frame_no: next, features: frameOf(cam.camera, next).features,
+      })),
+    });
+    const a9 = r.items.find((it) => it.camera === 0);
+    log(a9.estimated ? "warn" : "ok",
+      `${r.pair_id} 补算后首笔成对：相机 A #9 estimated=${a9.estimated}（应为 false，使用修正状态）`);
+    await refresh();
+    const history = await api("GET", "/api/pairs");
+    log("", `成对记录共 ${history.count} 笔，每笔都含两路；双路汇总可查同一 pair_id。`);
+  } catch (err) {
+    toast(String(err.message || err));
+    log("bad", `成对演示失败：${err.message || err}`);
+  } finally {
+    state.busy = false;
+    $("#btn-pair-demo").disabled = false;
+    await refresh().catch(() => {});
+  }
+}
+
+async function conflictDemo() {
+  if (state.busy) return;
+  state.busy = true;
+  $("#btn-conflict-demo").disabled = true;
+  try {
+    await api("POST", "/api/reset", { confirm: true });
+    await refresh();
+    // First pair succeeds so both streams sit at frame 1.
+    const first = await api("POST", "/api/pairs", {
+      items: state.samples.cameras.map((cam) => ({
+        camera: cam.camera, frame_no: 1, features: frameOf(cam.camera, 1).features,
+      })),
+    });
+    log("ok", `${first.pair_id} 成功，两路都到 #1`);
+    // Slow pair: a single-camera ingest lands during its compute window.
+    log("", "发起一笔带 800ms 延时的成对提交（#2 两路），期间从单路表单往相机 A 再送一帧 …");
+    const slow = api("POST", "/api/pairs", {
+      items: state.samples.cameras.map((cam) => ({
+        camera: cam.camera, frame_no: 2, features: frameOf(cam.camera, 2).features,
+      })),
+      compute_delay_ms: 800,
+    });
+    await sleep(150);
+    const single = await api("POST", "/api/cameras/0/frames", {
+      frame_no: 2, features: frameOf(0, 2).features,
+    });
+    log("warn", `单路送帧照常生效：相机 A #2 出分 ${fmt(single.score)}（版本推进到 v${single.version}）`);
+    let rejected = null;
+    try {
+      await slow;
+    } catch (err) {
+      rejected = err;
+    }
+    if (rejected?.status === 409 && rejected.data?.code === "pair_conflict") {
+      const who = (rejected.data.conflicts || []).map((c) => `相机${c.camera}（${c.reason.split(";")[0]}）`).join("；");
+      log("bad", `成对提交被整次退回 409：${who}。两路均未写入这笔，提示刷新后重试。`);
+    } else {
+      log("bad", "演练异常：慢成对提交没有按预期冲突");
+    }
+    await refresh();
+    const snapA = state.snaps[0];
+    const snapB = state.snaps[1];
+    log("", `原子性核对：相机 A 最新 #${snapA.last_frame}（单路帧），相机 B 最新 #${snapB.last_frame}（仍是 #1，未被半笔写入）`);
+    // Retry with refreshed next frames: A->3, B->2.
+    const retry = await api("POST", "/api/pairs", {
+      items: [
+        { camera: 0, frame_no: 3, features: frameOf(0, 3).features },
+        { camera: 1, frame_no: 2, features: frameOf(1, 2).features },
+      ],
+    });
+    log("ok", `刷新后重试成功：${retry.pair_id} 两路同时生效（A #3、B #2）`);
+  } catch (err) {
+    toast(String(err.message || err));
+    log("bad", `冲突演练失败：${err.message || err}`);
+  } finally {
+    state.busy = false;
+    $("#btn-conflict-demo").disabled = false;
+    await refresh().catch(() => {});
+  }
 }
 
 async function withBusy(fn) {
@@ -381,6 +613,10 @@ async function init() {
     $("#btn-clear-log").onclick = () => { $("#log").innerHTML = ""; };
     $("#btn-demo").onclick = demo;
     $("#btn-play-a").onclick = () => runCameraToEnd(0);
+    $("#btn-pair-demo").onclick = pairDemo;
+    $("#btn-conflict-demo").onclick = conflictDemo;
+    $("#pair-submit").onclick = submitPair;
+    $("#pair-fill-samples").onclick = fillPairFromSamples;
   } catch (err) {
     toast(`初始化失败：${err.message || err}`);
   }

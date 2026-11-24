@@ -3,14 +3,14 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>产线缺陷分数推理 · 单帧缺口补算</title>
+<title>产线缺陷分数推理 · 双路成对出分 · 缺口补算</title>
 <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
 <header class="topbar">
   <div>
     <h1>产线缺陷分数推理</h1>
-    <p class="sub">固定权重 NumPy 递推模型 · 每路允许暂缺一帧 · 补交原帧后按帧序补算</p>
+    <p class="sub">固定权重 NumPy 递推模型 · 同一工件两路成对出分 · 每路允许暂缺一帧 · 补交原帧后按帧序补算</p>
   </div>
   <div class="modelbox" id="modelbox">模型加载中…</div>
 </header>
@@ -20,6 +20,8 @@
     <button id="btn-reset" class="ghost">重置 / 载入样例</button>
     <button id="btn-play-a">相机 A 自动跑到底</button>
     <button id="btn-demo" class="accent">试跑：边补帧边进新帧</button>
+    <button id="btn-pair-demo" class="accent">试跑：双路成对提交</button>
+    <button id="btn-conflict-demo" class="danger">演练：成对提交并发冲突</button>
     <label class="pace">补算节拍
       <select id="pace">
         <option value="0">不等待</option>
@@ -32,10 +34,34 @@
 
   <section class="grid" id="cameras"></section>
 
+  <section class="panel pair-panel">
+    <div class="panel-head">
+      <h2>成对提交（同一工件 · 两路视角一次出分）</h2>
+      <span class="hint">一次填写两路相机各自的下一帧号与 8 维特征；两路同时生效，任一路失败则整笔不生效。</span>
+    </div>
+    <div id="pair-fields" class="pair-fields"></div>
+    <div class="submit-actions">
+      <button id="pair-fill-samples" type="button" class="ghost small">用两路样例下一帧填充</button>
+      <button id="pair-submit" type="button" class="accent">成对提交两路下一帧</button>
+      <label class="pace">冲突演练延时
+        <select id="pair-delay">
+          <option value="0" selected>不延时</option>
+          <option value="400">400 ms</option>
+          <option value="800">800 ms</option>
+        </select>
+      </label>
+    </div>
+    <div class="panel-head" style="margin-top:14px">
+      <h2>成对提交记录</h2>
+      <span class="hint">每笔成对提交共用一个 pair_id，同时挂在两路分数上；双路汇总不会只出现其中一路。</span>
+    </div>
+    <div id="pair-history" class="pair-history"><div class="empty">还没有成对提交。</div></div>
+  </section>
+
   <section class="panel">
     <div class="panel-head">
-      <h2>手动提交一帧</h2>
-      <span class="hint">按相机 + 帧号提交 8 维特征向量；帧号必须接在本路已出分帧之后（允许跳过一个帧号）。</span>
+      <h2>手动提交一帧（单路）</h2>
+      <span class="hint">按相机 + 帧号提交 8 维特征向量；帧号必须接在本路已出分帧之后（允许跳过一个帧号）。成对计算期间单路照常推进。</span>
     </div>
     <form id="submit-form" class="submit-form">
       <label>相机
@@ -66,9 +92,11 @@
   <details class="panel docs">
     <summary>规则说明</summary>
     <ul>
-      <li>按相机与帧号提交 8 维特征向量；每路同一时间最多只允许缺一帧。</li>
-      <li>缺帧时用零向量代入，继续出分，受影响的分数标为「暂估」。</li>
-      <li>补交原帧后，从缺口前的状态按帧序补算；两路照常接帧出分。</li>
+      <li><strong>成对出分：</strong>同一工件的两个视角必须一笔提交。两路各按自己的状态递推，帧、分数和状态一起生效；任一路校验或计算失败，本次提交在两路都不生效。</li>
+      <li><strong>并发退回：</strong>成对提交先快照两路版本再计算；发布前若任一路出了新分、完成补算或被重置，整次 409 退回，提示刷新后重试（点「演练：成对提交并发冲突」可复现）。</li>
+      <li>按相机与帧号提交 8 维特征向量；每路同一时间最多只允许缺一帧。成对提交只接受本路下一帧，缺帧仍走单路「标记缺失」。</li>
+      <li>缺帧时用零向量代入，继续出分，受影响的分数标为「暂估」；还有缺口的相机在成对提交里也先出暂估分，新帧随本路缺口补算，已发分数照旧保留。</li>
+      <li>补交原帧后，从缺口前的状态按帧序补算；补算期间两路和本路新帧都照常接帧出分。</li>
       <li>补算追上本路最新已出分的帧，才把修正状态交给后续推理；已发分数不改，修正值并列展示。</li>
       <li>补算失败则保留原状态与缺口，分数照常发布，可重试。</li>
     </ul>

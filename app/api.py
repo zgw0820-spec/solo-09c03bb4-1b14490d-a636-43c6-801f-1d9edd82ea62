@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import model
-from .engine import Engine, EngineError, MAX_PACE_MS
+from .engine import Engine, EngineError, MAX_PACE_MS, MAX_PAIR_DELAY_MS
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -20,8 +20,8 @@ SAMPLES_PATH = BASE_DIR / "data" / "samples.json"
 
 app = FastAPI(
     title="产线缺陷分数推理",
-    description="固定权重 NumPy 递推模型 + 单帧缺口补算",
-    version="1.0.0",
+    description="固定权重 NumPy 递推模型 + 单帧缺口补算 + 双路成对出分",
+    version="1.1.0",
 )
 engine = Engine()
 
@@ -60,6 +60,24 @@ class FillBody(BaseModel):
 
 class ResetBody(BaseModel):
     confirm: Literal[True]
+
+
+class PairItem(BaseModel):
+    camera: int = Field(..., ge=0)
+    frame_no: int = Field(..., ge=1)
+    features: list[float] = Field(..., min_length=model.FEATURES, max_length=model.FEATURES)
+
+
+class PairIn(BaseModel):
+    # Exactly one entry per configured camera; the engine also enforces that
+    # every configured camera appears exactly once.
+    items: list[PairItem] = Field(..., min_length=1)
+    compute_delay_ms: float | None = Field(
+        None,
+        ge=0,
+        le=MAX_PAIR_DELAY_MS,
+        description="演示用：两路模型递推之间的额外延时，便于稳定制造并发冲突",
+    )
 
 
 @app.exception_handler(EngineError)
@@ -122,6 +140,26 @@ def fill_gap(camera: int, body: FillBody) -> dict[str, Any]:
 def submit_frame_flat(body: FrameIn) -> dict[str, Any]:
     """Convenience endpoint mirroring the camera/frame/feature payload."""
     return engine.ingest(body.camera, body.frame_no, body.features)
+
+
+@app.post("/api/pairs")
+def submit_pair(body: PairIn) -> dict[str, Any]:
+    """Submit both camera views of one workpiece as a single transaction.
+
+    Either both frames score and commit together, or neither does: a stale
+    stream returns 409 ``pair_conflict`` with ``refresh_required=true`` and
+    the page is expected to re-fetch state before retrying.
+    """
+    return engine.submit_pair(
+        [item.model_dump() for item in body.items],
+        compute_delay_ms=body.compute_delay_ms or 0.0,
+    )
+
+
+@app.get("/api/pairs")
+def list_pairs(limit: int | None = None) -> dict[str, Any]:
+    """Paired-submission history (newest first)."""
+    return engine.list_pairs(limit=limit)
 
 
 @app.post("/api/reset")

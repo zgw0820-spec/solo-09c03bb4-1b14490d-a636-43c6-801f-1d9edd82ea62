@@ -48,6 +48,7 @@ button.accent { background: #163a58; border-color: #2b6f9e; }
 button.ghost { background: transparent; }
 button.small { padding: 4px 10px; font-size: 12px; }
 button.danger { border-color: #6b2c2c; color: #ffb3b3; }
+button.danger:not(:disabled) { background: #2a1717; }
 .pace { font-size: 13px; color: var(--muted); display: flex; gap: 6px; align-items: center; }
 select {
   background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
@@ -119,3 +120,30 @@ h2 { font-size: 15px; margin: 0; }
 .submit-form input { width: 110px; }
 .submit-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .submit-form .hint { flex-basis: 100%; }
+
+/* Paired two-view submission panel */
+.pair-panel { border-color: #2b5278; }
+.pair-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 12px; margin: 10px 0; }
+.pair-cam { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.pair-cam-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.pair-cam-body { display: flex; gap: 12px; margin-top: 10px; align-items: flex-start; flex-wrap: wrap; }
+.pair-label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+.pair-label.wide { flex: 1 1 240px; }
+.pair-label input { width: 96px; }
+.pair-label input, .pair-label textarea {
+  background: #0d1624; color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 9px; font: 13px/1.4 ui-monospace, Menlo, monospace;
+  width: 100%;
+}
+.tag.pair { color: #06141f; background: var(--accent); border-color: var(--accent); font-weight: 600; }
+.pair-history { display: flex; flex-direction: column; gap: 6px; max-height: 260px; overflow: auto; }
+.pair-row {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  background: rgba(84,182,255,.05); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; font-size: 12.5px;
+}
+.pair-item { display: inline-flex; gap: 5px; align-items: center; color: var(--text); }
+.pair-item strong { font-family: ui-monospace, Menlo, monospace; color: var(--accent); }
+@media (max-width: 560px) {
+  .pair-fields { grid-template-columns: 1fr; }
+}

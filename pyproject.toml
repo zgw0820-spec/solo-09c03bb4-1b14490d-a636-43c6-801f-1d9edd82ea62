@@ -1,7 +1,7 @@
 [project]
 name = "quality-inference-demo"
-version = "1.0.0"
-description = "Camera frame quality scoring with zero-substitution gap recovery"
+version = "1.1.0"
+description = "Two-camera paired quality scoring with zero-substitution gap recovery"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi==0.165.0",
